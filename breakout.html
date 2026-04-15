@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>ブロック崩し</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Courier New', monospace;
+      color: #eee;
+    }
+    h1 { margin-bottom: 10px; font-size: 1.5rem; letter-spacing: 4px; color: #e94560; }
+    #info {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 10px;
+      font-size: 0.9rem;
+    }
+    canvas {
+      background: #16213e;
+      border: 2px solid #0f3460;
+      border-radius: 4px;
+      display: block;
+    }
+    #message {
+      margin-top: 14px;
+      font-size: 1rem;
+      height: 1.4em;
+      color: #e94560;
+      letter-spacing: 2px;
+    }
+    #startBtn {
+      margin-top: 10px;
+      padding: 8px 28px;
+      background: #e94560;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      letter-spacing: 2px;
+      display: none;
+    }
+    #startBtn:hover { background: #c73652; }
+  </style>
+</head>
+<body>
+  <h1>BREAKOUT</h1>
+  <div id="info">
+    <span>SCORE: <b id="score">0</b></span>
+    <span>LIVES: <b id="lives">3</b></span>
+    <span>LEVEL: <b id="level">1</b></span>
+  </div>
+  <canvas id="canvas" width="480" height="400"></canvas>
+  <div id="message">← → キーまたはマウスでパドルを動かす</div>
+  <button id="startBtn" onclick="startGame()">もう一度</button>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    // --- Config ---
+    const PADDLE_W = 80, PADDLE_H = 10, PADDLE_Y = H - 30;
+    const BALL_R = 7;
+    const COLS = 10, ROWS = 5;
+    const BRICK_W = 44, BRICK_H = 16;
+    const BRICK_MARGIN = 2;
+    const BRICK_OFFSET_X = (W - (BRICK_W + BRICK_MARGIN) * COLS + BRICK_MARGIN) / 2;
+    const BRICK_OFFSET_Y = 50;
+    const COLORS = ['#e94560','#f5a623','#f8e71c','#7ed321','#4a90e2'];
+
+    let paddle, ball, bricks, score, lives, level, state, animId;
+
+    function init() {
+      score = 0; lives = 3; level = 1;
+      resetRound(true);
+      updateUI();
+    }
+
+    function resetRound(full) {
+      paddle = { x: W / 2 - PADDLE_W / 2, y: PADDLE_Y, w: PADDLE_W };
+      const speed = 3.5 + (level - 1) * 0.5;
+      ball = { x: W / 2, y: PADDLE_Y - BALL_R - 2, dx: speed * (Math.random() < 0.5 ? 1 : -1), dy: -speed, launched: false };
+      if (full) bricks = makeBricks();
+      state = 'ready';
+      document.getElementById('message').textContent = 'スペースキーまたはクリックでスタート';
+      document.getElementById('startBtn').style.display = 'none';
+    }
+
+    function makeBricks() {
+      const arr = [];
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          arr.push({
+            x: BRICK_OFFSET_X + c * (BRICK_W + BRICK_MARGIN),
+            y: BRICK_OFFSET_Y + r * (BRICK_H + BRICK_MARGIN),
+            alive: true,
+            color: COLORS[r % COLORS.length]
+          });
+        }
+      }
+      return arr;
+    }
+
+    // --- Input ---
+    let keys = {};
+    document.addEventListener('keydown', e => {
+      keys[e.key] = true;
+      if ((e.key === ' ' || e.key === 'Enter') && state === 'ready') launch();
+    });
+    document.addEventListener('keyup', e => { keys[e.key] = false; });
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      paddle.x = Math.max(0, Math.min(W - paddle.w, mx - paddle.w / 2));
+      if (!ball.launched) ball.x = paddle.x + paddle.w / 2;
+    });
+    canvas.addEventListener('click', () => { if (state === 'ready') launch(); });
+
+    function launch() {
+      ball.launched = true;
+      state = 'playing';
+      document.getElementById('message').textContent = '';
+    }
+
+    function startGame() { cancelAnimationFrame(animId); init(); loop(); }
+
+    // --- Game Logic ---
+    function update() {
+      if (state !== 'playing') return;
+
+      // Paddle move
+      const speed = 6;
+      if (keys['ArrowLeft'])  paddle.x = Math.max(0, paddle.x - speed);
+      if (keys['ArrowRight']) paddle.x = Math.min(W - paddle.w, paddle.x + speed);
+
+      // Ball
+      ball.x += ball.dx;
+      ball.y += ball.dy;
+
+      // Wall bounce
+      if (ball.x - BALL_R < 0)       { ball.x = BALL_R; ball.dx *= -1; }
+      if (ball.x + BALL_R > W)       { ball.x = W - BALL_R; ball.dx *= -1; }
+      if (ball.y - BALL_R < 0)       { ball.y = BALL_R; ball.dy *= -1; }
+
+      // Paddle collision
+      if (
+        ball.dy > 0 &&
+        ball.y + BALL_R >= paddle.y &&
+        ball.y + BALL_R <= paddle.y + PADDLE_H &&
+        ball.x >= paddle.x && ball.x <= paddle.x + paddle.w
+      ) {
+        ball.y = paddle.y - BALL_R;
+        // Vary angle based on hit position
+        const hit = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+        const angle = hit * Math.PI / 3;
+        const spd = Math.hypot(ball.dx, ball.dy);
+        ball.dx = spd * Math.sin(angle);
+        ball.dy = -Math.abs(spd * Math.cos(angle));
+      }
+
+      // Brick collision
+      for (const b of bricks) {
+        if (!b.alive) continue;
+        if (
+          ball.x + BALL_R > b.x && ball.x - BALL_R < b.x + BRICK_W &&
+          ball.y + BALL_R > b.y && ball.y - BALL_R < b.y + BRICK_H
+        ) {
+          b.alive = false;
+          score += 10 * level;
+          updateUI();
+
+          // Determine bounce direction
+          const overlapL = ball.x + BALL_R - b.x;
+          const overlapR = b.x + BRICK_W - (ball.x - BALL_R);
+          const overlapT = ball.y + BALL_R - b.y;
+          const overlapB = b.y + BRICK_H - (ball.y - BALL_R);
+          const minH = Math.min(overlapL, overlapR);
+          const minV = Math.min(overlapT, overlapB);
+          if (minH < minV) ball.dx *= -1; else ball.dy *= -1;
+          break;
+        }
+      }
+
+      // Ball lost
+      if (ball.y - BALL_R > H) {
+        lives--;
+        updateUI();
+        if (lives <= 0) { state = 'over'; gameOver(); }
+        else { resetRound(false); }
+        return;
+      }
+
+      // All bricks cleared
+      if (bricks.every(b => !b.alive)) {
+        level++;
+        updateUI();
+        resetRound(true);
+      }
+    }
+
+    function gameOver() {
+      document.getElementById('message').textContent = 'GAME OVER  SCORE: ' + score;
+      document.getElementById('startBtn').style.display = 'inline-block';
+    }
+
+    function updateUI() {
+      document.getElementById('score').textContent = score;
+      document.getElementById('lives').textContent = lives;
+      document.getElementById('level').textContent = level;
+    }
+
+    // --- Draw ---
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // Bricks
+      for (const b of bricks) {
+        if (!b.alive) continue;
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.roundRect(b.x, b.y, BRICK_W, BRICK_H, 3);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.fillRect(b.x + 2, b.y + 2, BRICK_W - 4, 4);
+      }
+
+      // Paddle
+      const grad = ctx.createLinearGradient(paddle.x, paddle.y, paddle.x, paddle.y + PADDLE_H);
+      grad.addColorStop(0, '#4a90e2');
+      grad.addColorStop(1, '#0f3460');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect(paddle.x, paddle.y, paddle.w, PADDLE_H, 5);
+      ctx.fill();
+
+      // Ball
+      const ballGrad = ctx.createRadialGradient(ball.x - 2, ball.y - 2, 1, ball.x, ball.y, BALL_R);
+      ballGrad.addColorStop(0, '#fff');
+      ballGrad.addColorStop(1, '#e94560');
+      ctx.fillStyle = ballGrad;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function loop() {
+      update();
+      draw();
+      animId = requestAnimationFrame(loop);
+    }
+
+    init();
+    loop();
+  </script>
+</body>
+</html>
